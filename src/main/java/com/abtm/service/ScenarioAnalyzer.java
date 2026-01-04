@@ -2,457 +2,360 @@ package com.abtm.service;
 
 import org.springframework.stereotype.Service;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 
-/**
- * ScenarioAnalyzer Service - Core quality analysis engine for BDD scenarios
- * 
- * Implements the 6-dimensional Scenario Quality Rubric:
- * 1. Clarity & Readability (20%)
- * 2. Business Value Alignment (20%)
- * 3. Gherkin Correctness (20%)
- * 4. Testability (20%)
- * 5. Specificity (10%)
- * 6. Duplication Avoidance (10%)
- */
 @Service
 public class ScenarioAnalyzer {
-    
-    // Anti-pattern keywords
-    private static final Set<String> UI_KEYWORDS = new HashSet<>(Arrays.asList(
-        "click", "button", "textbox", "dropdown", "checkbox", "radio",
-        "menu", "link", "icon", "navigate", "scroll", "drag", "hover"
-    ));
-    
-    private static final Set<String> VAGUE_TERMS = new HashSet<>(Arrays.asList(
-        "properly", "correctly", "successfully", "appropriately", "adequately",
-        "efficiently", "quickly", "slowly", "well", "badly"
-    ));
-    
-    private static final Set<String> IMPLEMENTATION_KEYWORDS = new HashSet<>(Arrays.asList(
-        "database", "api", "rest", "json", "xml", "sql", "http", "get", "post",
-        "put", "delete", "endpoint", "service", "repository", "controller"
-    ));
-    
-    public ScenarioAnalyzer() {
-        // No initialization needed for regex-based parsing
-    }
-    
+
     /**
-     * Analyze a BDD scenario and return quality scores
+     * Analyze a BDD scenario and return scores for 6 dimensions
      */
     public AnalysisResult analyze(String scenarioContent) {
         AnalysisResult result = new AnalysisResult();
         
-        try {
-            if (scenarioContent == null || scenarioContent.trim().isEmpty()) {
-                result.setParseError("Scenario content is empty");
-                result.setAllScoresToZero();
-                return result;
-            }
-            
-            // Parse scenario using regex
-            List<String> lines = Arrays.asList(scenarioContent.split("\\r?\\n"));
-            List<String> steps = extractSteps(lines);
-            
-            if (steps.isEmpty()) {
-                result.setParseError("No Given/When/Then steps found");
-                result.setAllScoresToZero();
-                return result;
-            }
-            
-            // Calculate dimension scores
-            result.setClarityScore(analyzeClarity(steps));
-            result.setBusinessValueScore(analyzeBusinessValue(steps));
-            result.setGherkinScore(analyzeGherkin(steps));
-            result.setTestabilityScore(analyzeTestability(steps));
-            result.setSpecificityScore(analyzeSpecificity(steps));
-            result.setDuplicationScore(analyzeDuplication(steps));
-            
-            // Detect anti-patterns
-            result.setDetectedAntipatterns(detectAntipatterns(steps));
-            
-            // Check automation readiness
-            result.setAutomationReady(checkAutomationReadiness(result));
-            
-            // Generate feedback
-            result.setFeedback(generateFeedback(result));
-            
-            // Calculate overall SQS
-            result.calculateOverallSqs();
-            
-        } catch (Exception e) {
-            result.setParseError("Error analyzing scenario: " + e.getMessage());
-            result.setAllScoresToZero();
+        if (scenarioContent == null || scenarioContent.trim().isEmpty()) {
+            return result; // Return zeros
         }
+        
+        String content = scenarioContent.trim();
+        
+        // Analyze each dimension
+        result.setClarityScore(analyzeClarityAndReadability(content));
+        result.setBusinessValueScore(analyzeBusinessValueAlignment(content));
+        result.setGherkinScore(analyzeGherkinCorrectness(content));
+        result.setTestabilityScore(analyzeTestability(content));
+        result.setSpecificityScore(analyzeSpecificity(content));
+        result.setDuplicationScore(analyzeDuplicationAvoidance(content));
+        
+        // Calculate overall score
+        result.calculateOverallScore();
+        
+        // Detect anti-patterns
+        result.setDetectedAntipatterns(detectAntipatterns(content));
+        
+        // Generate feedback
+        result.setFeedback(generateFeedback(result));
+        
+        // Check automation readiness
+        result.setAutomationReady(isAutomationReady(result));
         
         return result;
     }
     
     /**
-     * Extract Given/When/Then steps from scenario lines
+     * Analyze clarity and readability (0-10)
      */
-    private List<String> extractSteps(List<String> lines) {
-        List<String> steps = new ArrayList<>();
-        Pattern stepPattern = Pattern.compile("^\\s*(Given|When|Then|And|But)\\s+(.+)$", Pattern.CASE_INSENSITIVE);
+    private double analyzeClarityAndReadability(String content) {
+        double score = 5.0; // Base score
         
+        // Check for Given/When/Then structure
+        if (content.toLowerCase().contains("given") && 
+            content.toLowerCase().contains("when") && 
+            content.toLowerCase().contains("then")) {
+            score += 2.0;
+        }
+        
+        // Check line length (prefer concise lines)
+        String[] lines = content.split("\n");
+        int longLines = 0;
         for (String line : lines) {
-            if (stepPattern.matcher(line).matches()) {
-                steps.add(line.trim());
+            if (line.length() > 100) {
+                longLines++;
             }
         }
-        
-        return steps;
-    }
-    
-    /**
-     * Dimension 1: Clarity & Readability (0-5 scale)
-     */
-    private double analyzeClarity(List<String> steps) {
-        double score = 5.0;
-        
-        // Check step clarity
-        for (String step : steps) {
-            String text = step.toLowerCase();
-            
-            // Penalize vague terms
-            for (String vague : VAGUE_TERMS) {
-                if (text.contains(vague)) {
-                    score -= 0.2;
-                }
-            }
-            
-            // Penalize overly long steps (> 15 words)
-            int wordCount = text.split("\\s+").length;
-            if (wordCount > 15) {
-                score -= 0.3;
-            }
-            
-            // Penalize technical jargon
-            if (text.contains("_") || text.matches(".*[a-z][A-Z].*")) {
-                score -= 0.2;
-            }
+        if (longLines == 0) {
+            score += 1.5;
+        } else if (longLines < 3) {
+            score += 0.5;
         }
         
-        return Math.max(0.0, Math.min(5.0, score));
-    }
-    
-    /**
-     * Dimension 2: Business Value Alignment (0-5 scale)
-     */
-    private double analyzeBusinessValue(List<String> steps) {
-        double score = 5.0;
-        
-        for (String step : steps) {
-            String text = step.toLowerCase();
-            
-            // Penalize UI-specific steps
-            for (String uiKeyword : UI_KEYWORDS) {
-                if (text.contains(uiKeyword)) {
-                    score -= 0.5;
-                }
-            }
-            
-            // Penalize implementation details
-            for (String implKeyword : IMPLEMENTATION_KEYWORDS) {
-                if (text.contains(implKeyword)) {
-                    score -= 0.4;
-                }
-            }
+        // Check for clear step separation
+        if (content.contains("\n")) {
+            score += 1.0;
         }
         
-        // Check for user-focused language
-        boolean hasUserFocus = steps.stream()
-            .anyMatch(s -> s.toLowerCase().contains("user") ||
-                          s.toLowerCase().contains("customer") ||
-                          s.toLowerCase().contains(" i "));
-        
-        if (!hasUserFocus) {
-            score -= 0.5;
-        }
-        
-        return Math.max(0.0, Math.min(5.0, score));
-    }
-    
-    /**
-     * Dimension 3: Gherkin Correctness (0-5 scale)
-     */
-    private double analyzeGherkin(List<String> steps) {
-        double score = 5.0;
-        
-        // Check for proper Given/When/Then structure
-        boolean hasGiven = steps.stream().anyMatch(s -> s.trim().toLowerCase().startsWith("given"));
-        boolean hasWhen = steps.stream().anyMatch(s -> s.trim().toLowerCase().startsWith("when"));
-        boolean hasThen = steps.stream().anyMatch(s -> s.trim().toLowerCase().startsWith("then"));
-        
-        if (!hasGiven) score -= 1.5;
-        if (!hasWhen) score -= 1.5;
-        if (!hasThen) score -= 1.5;
-        
-        // Check for proper step format
-        Pattern stepPattern = Pattern.compile("^(Given|When|Then|And|But)\\s+.+$", Pattern.CASE_INSENSITIVE);
-        for (String step : steps) {
-            if (!stepPattern.matcher(step.trim()).matches()) {
-                score -= 0.5;
-            }
-        }
-        
-        return Math.max(0.0, Math.min(5.0, score));
-    }
-    
-    /**
-     * Dimension 4: Testability (0-5 scale)
-     */
-    private double analyzeTestability(List<String> steps) {
-        double score = 5.0;
-        
-        // Check for Then steps (assertions)
-        List<String> thenSteps = steps.stream()
-            .filter(s -> s.trim().toLowerCase().startsWith("then"))
-            .collect(Collectors.toList());
-        
-        if (thenSteps.isEmpty()) {
+        // Penalize if too short or too long
+        if (content.length() < 50) {
             score -= 2.0;
-        }
-        
-        // Check for concrete expected outcomes
-        boolean hasConcreteOutcome = thenSteps.stream()
-            .anyMatch(s -> s.matches(".*\\d+.*") || // Contains numbers
-                          s.toLowerCase().contains("should") ||
-                          s.toLowerCase().contains("must") ||
-                          s.toLowerCase().contains("is") ||
-                          s.toLowerCase().contains("are"));
-        
-        if (!hasConcreteOutcome && !thenSteps.isEmpty()) {
+        } else if (content.length() > 1000) {
             score -= 1.0;
         }
         
-        // Penalize ambiguous assertions
-        for (String then : thenSteps) {
-            String lower = then.toLowerCase();
-            if (lower.contains("something") || lower.contains("anything") || 
-                lower.contains("some") || lower.contains("any")) {
+        return Math.max(0, Math.min(10, score));
+    }
+    
+    /**
+     * Analyze business value alignment (0-10)
+     */
+    private double analyzeBusinessValueAlignment(String content) {
+        double score = 5.0;
+        
+        // Check for business domain terms
+        String[] businessTerms = {"user", "customer", "system", "application", "service", "account", "order", "product"};
+        for (String term : businessTerms) {
+            if (content.toLowerCase().contains(term)) {
+                score += 0.5;
+                break;
+            }
+        }
+        
+        // Check for value-oriented language
+        if (content.toLowerCase().contains("should") || content.toLowerCase().contains("must")) {
+            score += 1.0;
+        }
+        
+        // Check for concrete outcomes
+        if (content.toLowerCase().contains("then")) {
+            score += 1.5;
+        }
+        
+        // Penalize technical jargon
+        String[] technicalTerms = {"api", "database", "query", "function", "method", "class"};
+        for (String term : technicalTerms) {
+            if (content.toLowerCase().contains(term)) {
                 score -= 0.5;
             }
         }
         
-        return Math.max(0.0, Math.min(5.0, score));
+        return Math.max(0, Math.min(10, score));
     }
     
     /**
-     * Dimension 5: Specificity (0-5 scale)
+     * Analyze Gherkin correctness (0-10)
      */
-    private double analyzeSpecificity(List<String> steps) {
+    private double analyzeGherkinCorrectness(String content) {
+        double score = 0.0;
+        
+        String lower = content.toLowerCase();
+        
+        // Check for Given
+        if (lower.contains("given")) {
+            score += 3.0;
+        }
+        
+        // Check for When
+        if (lower.contains("when")) {
+            score += 3.0;
+        }
+        
+        // Check for Then
+        if (lower.contains("then")) {
+            score += 3.0;
+        }
+        
+        // Bonus for proper order (Given before When before Then)
+        int givenIndex = lower.indexOf("given");
+        int whenIndex = lower.indexOf("when");
+        int thenIndex = lower.indexOf("then");
+        
+        if (givenIndex >= 0 && whenIndex >= 0 && thenIndex >= 0) {
+            if (givenIndex < whenIndex && whenIndex < thenIndex) {
+                score += 1.0;
+            }
+        }
+        
+        return Math.max(0, Math.min(10, score));
+    }
+    
+    /**
+     * Analyze testability (0-10)
+     */
+    private double analyzeTestability(String content) {
         double score = 5.0;
         
-        for (String step : steps) {
-            String lower = step.toLowerCase();
-            
-            // Penalize generic terms
-            String[] genericTerms = {"something", "anything", "some", "any", "several", "few", "many"};
-            for (String generic : genericTerms) {
-                if (lower.contains(generic)) {
-                    score -= 0.3;
-                }
-            }
-            
-            // Reward concrete values (numbers, specific strings)
-            boolean hasConcrete = step.matches(".*\\d+.*") || // Has numbers
-                                 step.matches(".*\"[^\"]+\".*") || // Has quoted strings
-                                 step.matches(".*'[^']+'.*"); // Has single-quoted strings
-            
-            if (!hasConcrete) {
-                score -= 0.2;
+        // Check for concrete, testable assertions
+        if (content.toLowerCase().contains("should")) {
+            score += 1.5;
+        }
+        
+        // Check for specific values
+        Pattern numberPattern = Pattern.compile("\\d+");
+        Matcher matcher = numberPattern.matcher(content);
+        if (matcher.find()) {
+            score += 1.5;
+        }
+        
+        // Penalize vague terms
+        String[] vagueTerms = {"some", "maybe", "might", "could", "possibly"};
+        for (String term : vagueTerms) {
+            if (content.toLowerCase().contains(term)) {
+                score -= 1.0;
             }
         }
         
-        return Math.max(0.0, Math.min(5.0, score));
+        // Check for action verbs in When clause
+        if (content.toLowerCase().contains("when")) {
+            String[] actionVerbs = {"click", "enter", "submit", "select", "choose", "create", "delete", "update"};
+            for (String verb : actionVerbs) {
+                if (content.toLowerCase().contains(verb)) {
+                    score += 1.0;
+                    break;
+                }
+            }
+        }
+        
+        return Math.max(0, Math.min(10, score));
     }
     
     /**
-     * Dimension 6: Duplication Avoidance (0-5 scale)
+     * Analyze specificity (0-10)
      */
-    private double analyzeDuplication(List<String> steps) {
+    private double analyzeSpecificity(String content) {
         double score = 5.0;
         
-        // Check for duplicate steps
-        Set<String> uniqueSteps = new HashSet<>(steps);
-        int duplicates = steps.size() - uniqueSteps.size();
+        // Check for specific data
+        if (content.matches(".*\\d+.*")) {
+            score += 2.0;
+        }
         
-        score -= (duplicates * 0.5);
+        // Check for quoted strings (specific values)
+        if (content.contains("\"")) {
+            score += 1.5;
+        }
         
-        // Check for similar steps (high similarity)
-        for (int i = 0; i < steps.size(); i++) {
-            for (int j = i + 1; j < steps.size(); j++) {
-                double similarity = calculateSimilarity(steps.get(i), steps.get(j));
-                if (similarity > 0.8) {
-                    score -= 0.3;
-                }
+        // Penalize generic terms
+        String[] genericTerms = {"something", "anything", "stuff", "things"};
+        for (String term : genericTerms) {
+            if (content.toLowerCase().contains(term)) {
+                score -= 2.0;
             }
         }
         
-        return Math.max(0.0, Math.min(5.0, score));
-    }
-    
-    /**
-     * Calculate similarity between two strings (0.0 to 1.0)
-     */
-    private double calculateSimilarity(String s1, String s2) {
-        String longer = s1.length() > s2.length() ? s1 : s2;
-        String shorter = s1.length() > s2.length() ? s2 : s1;
-        
-        if (longer.length() == 0) {
-            return 1.0;
+        // Reward concrete examples
+        if (content.contains("example") || content.contains("e.g.")) {
+            score += 1.5;
         }
         
-        int distance = calculateLevenshteinDistance(shorter, longer);
-        return (longer.length() - distance) / (double) longer.length();
+        return Math.max(0, Math.min(10, score));
     }
     
     /**
-     * Calculate Levenshtein distance between two strings
+     * Analyze duplication avoidance (0-10)
      */
-    private int calculateLevenshteinDistance(String s1, String s2) {
-        int[][] dp = new int[s1.length() + 1][s2.length() + 1];
+    private double analyzeDuplicationAvoidance(String content) {
+        // This is a simple check - in real implementation would check against database
+        double score = 7.0; // Base score assuming no duplication
         
-        for (int i = 0; i <= s1.length(); i++) {
-            for (int j = 0; j <= s2.length(); j++) {
-                if (i == 0) {
-                    dp[i][j] = j;
-                } else if (j == 0) {
-                    dp[i][j] = i;
-                } else {
-                    dp[i][j] = Math.min(
-                        Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1),
-                        dp[i - 1][j - 1] + (s1.charAt(i - 1) == s2.charAt(j - 1) ? 0 : 1)
-                    );
-                }
+        // Check for repetitive patterns within the scenario
+        String[] lines = content.split("\n");
+        Map<String, Integer> lineCount = new HashMap<>();
+        
+        for (String line : lines) {
+            String trimmed = line.trim().toLowerCase();
+            if (!trimmed.isEmpty()) {
+                lineCount.put(trimmed, lineCount.getOrDefault(trimmed, 0) + 1);
             }
         }
         
-        return dp[s1.length()][s2.length()];
+        // Penalize repeated lines
+        for (Integer count : lineCount.values()) {
+            if (count > 1) {
+                score -= 1.5;
+            }
+        }
+        
+        return Math.max(0, Math.min(10, score));
     }
     
     /**
-     * Detect anti-patterns in steps
+     * Detect anti-patterns in the scenario
      */
-    private List<String> detectAntipatterns(List<String> steps) {
+    private List<String> detectAntipatterns(String content) {
         List<String> antipatterns = new ArrayList<>();
+        String lower = content.toLowerCase();
         
-        for (String step : steps) {
-            String lower = step.toLowerCase();
-            
-            // UI-centric anti-patterns
-            for (String uiKeyword : UI_KEYWORDS) {
-                if (lower.contains(uiKeyword)) {
-                    antipatterns.add("UI-centric: " + step.trim());
-                    break;
-                }
+        // Check for UI-specific steps
+        String[] uiTerms = {"click button", "click on", "press button", "fill form"};
+        for (String term : uiTerms) {
+            if (lower.contains(term)) {
+                antipatterns.add("UI-dependent steps detected - prefer behavior over implementation");
+                break;
             }
-            
-            // Implementation details
-            for (String implKeyword : IMPLEMENTATION_KEYWORDS) {
-                if (lower.contains(implKeyword)) {
-                    antipatterns.add("Implementation detail: " + step.trim());
-                    break;
-                }
+        }
+        
+        // Check for technical implementation details
+        String[] techTerms = {"database", "api call", "function", "method"};
+        for (String term : techTerms) {
+            if (lower.contains(term)) {
+                antipatterns.add("Technical implementation details should be avoided");
+                break;
             }
-            
-            // Vague language
-            for (String vague : VAGUE_TERMS) {
-                if (lower.contains(vague)) {
-                    antipatterns.add("Vague language: " + step.trim());
-                    break;
-                }
-            }
-            
-            // Overly complex steps
-            int wordCount = step.split("\\s+").length;
-            if (wordCount > 15) {
-                antipatterns.add("Too complex: " + step.trim());
-            }
+        }
+        
+        // Check for missing structure
+        if (!lower.contains("given") || !lower.contains("when") || !lower.contains("then")) {
+            antipatterns.add("Missing proper Given-When-Then structure");
+        }
+        
+        // Check for vague assertions
+        if (lower.contains("works") || lower.contains("is ok")) {
+            antipatterns.add("Vague assertions - be more specific about expected behavior");
         }
         
         return antipatterns;
     }
     
     /**
-     * Check if scenario is automation-ready
-     */
-    private boolean checkAutomationReadiness(AnalysisResult result) {
-        // Automation ready if:
-        // 1. Has proper Given/When/Then structure (Gherkin score >= 3.0)
-        // 2. Steps are concrete and testable (Testability >= 3.0)
-        // 3. No major anti-patterns (< 3 patterns detected)
-        
-        return result.getGherkinScore() >= 3.0 &&
-               result.getTestabilityScore() >= 3.0 &&
-               result.getDetectedAntipatterns().size() < 3;
-    }
-    
-    /**
-     * Generate feedback based on analysis
+     * Generate feedback based on analysis results
      */
     private String generateFeedback(AnalysisResult result) {
         StringBuilder feedback = new StringBuilder();
         
         // Overall assessment
-        double overallSqs = result.calculateOverallSqs();
-        if (overallSqs >= 4.5) {
-            feedback.append("Excellent scenario! ");
-        } else if (overallSqs >= 3.5) {
-            feedback.append("Good scenario with room for improvement. ");
-        } else if (overallSqs >= 2.5) {
-            feedback.append("Fair scenario - needs significant improvements. ");
+        if (result.getOverallScore() >= 8.0) {
+            feedback.append("Excellent scenario! Well-structured and testable.\n\n");
+        } else if (result.getOverallScore() >= 6.0) {
+            feedback.append("Good scenario with room for improvement.\n\n");
+        } else if (result.getOverallScore() >= 4.0) {
+            feedback.append("Scenario needs improvement in several areas.\n\n");
         } else {
-            feedback.append("Poor scenario - major revisions needed. ");
+            feedback.append("Scenario requires significant revision.\n\n");
         }
         
-        // Specific dimension feedback
-        if (result.getClarityScore() < 3.0) {
-            feedback.append("Improve clarity by using simple, direct language. ");
+        // Specific feedback for low scores
+        if (result.getClarityScore() < 6.0) {
+            feedback.append("• Improve clarity: Use clear, concise language and proper formatting.\n");
+        }
+        if (result.getBusinessValueScore() < 6.0) {
+            feedback.append("• Focus on business value: Describe user behavior, not technical implementation.\n");
+        }
+        if (result.getGherkinScore() < 6.0) {
+            feedback.append("• Fix Gherkin structure: Ensure proper Given-When-Then format.\n");
+        }
+        if (result.getTestabilityScore() < 6.0) {
+            feedback.append("• Improve testability: Use specific, measurable assertions.\n");
+        }
+        if (result.getSpecificityScore() < 6.0) {
+            feedback.append("• Be more specific: Include concrete examples and data.\n");
         }
         
-        if (result.getBusinessValueScore() < 3.0) {
-            feedback.append("Focus on business value rather than UI or implementation details. ");
-        }
-        
-        if (result.getGherkinScore() < 3.0) {
-            feedback.append("Ensure proper Given-When-Then structure. ");
-        }
-        
-        if (result.getTestabilityScore() < 3.0) {
-            feedback.append("Add concrete expected outcomes in Then steps. ");
-        }
-        
-        if (result.getSpecificityScore() < 3.0) {
-            feedback.append("Use specific values instead of vague terms like 'some' or 'something'. ");
-        }
-        
-        if (result.getDuplicationScore() < 4.0) {
-            feedback.append("Remove duplicate or highly similar steps. ");
-        }
-        
-        // Anti-pattern feedback
+        // Anti-patterns feedback
         if (!result.getDetectedAntipatterns().isEmpty()) {
-            feedback.append(String.format("Found %d anti-patterns to address. ", 
-                result.getDetectedAntipatterns().size()));
-        }
-        
-        // Automation readiness
-        if (result.isAutomationReady()) {
-            feedback.append("✓ Scenario is automation-ready!");
-        } else {
-            feedback.append("✗ Scenario needs improvements before automation.");
+            feedback.append("\nDetected Issues:\n");
+            for (String antipattern : result.getDetectedAntipatterns()) {
+                feedback.append("• ").append(antipattern).append("\n");
+            }
         }
         
         return feedback.toString();
     }
     
     /**
-     * Analysis Result inner class
+     * Check if scenario is automation-ready
+     */
+    private boolean isAutomationReady(AnalysisResult result) {
+        return result.getGherkinScore() >= 7.0 && 
+               result.getTestabilityScore() >= 7.0 &&
+               result.getSpecificityScore() >= 6.0;
+    }
+    
+    /**
+     * Analysis result class
      */
     public static class AnalysisResult {
         private double clarityScore;
@@ -461,38 +364,28 @@ public class ScenarioAnalyzer {
         private double testabilityScore;
         private double specificityScore;
         private double duplicationScore;
-        private double overallSqs;
+        private double overallScore;
+        private String feedback;
         private List<String> detectedAntipatterns = new ArrayList<>();
         private boolean automationReady;
-        private String feedback;
-        private String parseError;
         
-        // Weighted scoring (matching research paper Section 3.4)
-        private static final double CLARITY_WEIGHT = 0.20;
-        private static final double BUSINESS_VALUE_WEIGHT = 0.20;
-        private static final double GHERKIN_WEIGHT = 0.20;
-        private static final double TESTABILITY_WEIGHT = 0.20;
-        private static final double SPECIFICITY_WEIGHT = 0.10;
-        private static final double DUPLICATION_WEIGHT = 0.10;
-        
-        public double calculateOverallSqs() {
-            this.overallSqs = (clarityScore * CLARITY_WEIGHT) +
-                             (businessValueScore * BUSINESS_VALUE_WEIGHT) +
-                             (gherkinScore * GHERKIN_WEIGHT) +
-                             (testabilityScore * TESTABILITY_WEIGHT) +
-                             (specificityScore * SPECIFICITY_WEIGHT) +
-                             (duplicationScore * DUPLICATION_WEIGHT);
-            return this.overallSqs;
-        }
-        
-        public void setAllScoresToZero() {
-            this.clarityScore = 0.0;
-            this.businessValueScore = 0.0;
-            this.gherkinScore = 0.0;
-            this.testabilityScore = 0.0;
-            this.specificityScore = 0.0;
-            this.duplicationScore = 0.0;
-            this.overallSqs = 0.0;
+        public void calculateOverallScore() {
+            double[] weights = {0.20, 0.20, 0.20, 0.15, 0.15, 0.10};
+            double[] scores = {
+                clarityScore, 
+                businessValueScore, 
+                gherkinScore, 
+                testabilityScore, 
+                specificityScore, 
+                duplicationScore
+            };
+            
+            double weightedSum = 0.0;
+            for (int i = 0; i < weights.length; i++) {
+                weightedSum += weights[i] * scores[i];
+            }
+            
+            this.overallScore = Math.round(weightedSum * 100.0) / 100.0;
         }
         
         // Getters and Setters
@@ -514,19 +407,16 @@ public class ScenarioAnalyzer {
         public double getDuplicationScore() { return duplicationScore; }
         public void setDuplicationScore(double duplicationScore) { this.duplicationScore = duplicationScore; }
         
-        public double getOverallSqs() { return overallSqs; }
-        public void setOverallSqs(double overallSqs) { this.overallSqs = overallSqs; }
+        public double getOverallScore() { return overallScore; }
+        public void setOverallScore(double overallScore) { this.overallScore = overallScore; }
+        
+        public String getFeedback() { return feedback; }
+        public void setFeedback(String feedback) { this.feedback = feedback; }
         
         public List<String> getDetectedAntipatterns() { return detectedAntipatterns; }
         public void setDetectedAntipatterns(List<String> detectedAntipatterns) { this.detectedAntipatterns = detectedAntipatterns; }
         
         public boolean isAutomationReady() { return automationReady; }
         public void setAutomationReady(boolean automationReady) { this.automationReady = automationReady; }
-        
-        public String getFeedback() { return feedback; }
-        public void setFeedback(String feedback) { this.feedback = feedback; }
-        
-        public String getParseError() { return parseError; }
-        public void setParseError(String parseError) { this.parseError = parseError; }
     }
 }

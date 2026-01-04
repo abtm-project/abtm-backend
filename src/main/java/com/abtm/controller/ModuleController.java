@@ -5,312 +5,292 @@ import com.abtm.model.Module;
 import com.abtm.model.User;
 import com.abtm.service.ModuleService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
-import java.util.Map;
 
-/**
- * REST Controller for Module and Exercise operations
- */
 @RestController
 @RequestMapping("/api/modules")
 @CrossOrigin(origins = "*")
 public class ModuleController {
-    
+
     @Autowired
     private ModuleService moduleService;
-    
+
     /**
      * Get all modules
-     * GET /api/modules
      */
     @GetMapping
-    public ResponseEntity<?> getAllModules() {
+    public ResponseEntity<List<Module>> getAllModules() {
         try {
-            List<Module> modules = moduleService.getAllModules();
+            List<Module> modules = moduleService.getActiveModules();
             return ResponseEntity.ok(modules);
-            
         } catch (Exception e) {
-            return ResponseEntity.badRequest()
-                .body(Map.of("error", e.getMessage()));
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
     }
-    
+
     /**
      * Get module by ID
-     * GET /api/modules/{moduleId}
      */
-    @GetMapping("/{moduleId}")
-    public ResponseEntity<?> getModuleById(@PathVariable Long moduleId) {
+    @GetMapping("/{id}")
+    public ResponseEntity<?> getModuleById(@PathVariable Long id) {
         try {
-            Module module = moduleService.getModuleById(moduleId);
-            return ResponseEntity.ok(module);
-            
+            Module module = moduleService.getModuleById(id);
+            if (module != null) {
+                return ResponseEntity.ok(module);
+            } else {
+                return ResponseEntity.notFound().build();
+            }
         } catch (Exception e) {
-            return ResponseEntity.badRequest()
-                .body(Map.of("error", e.getMessage()));
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body("Error: " + e.getMessage());
         }
     }
-    
+
     /**
      * Get module by number
-     * GET /api/modules/number/{moduleNumber}
      */
     @GetMapping("/number/{moduleNumber}")
     public ResponseEntity<?> getModuleByNumber(@PathVariable Integer moduleNumber) {
         try {
             Module module = moduleService.getModuleByNumber(moduleNumber);
-            return ResponseEntity.ok(module);
-            
+            if (module != null) {
+                return ResponseEntity.ok(module);
+            } else {
+                return ResponseEntity.notFound().build();
+            }
         } catch (Exception e) {
-            return ResponseEntity.badRequest()
-                .body(Map.of("error", e.getMessage()));
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body("Error: " + e.getMessage());
         }
     }
-    
+
     /**
-     * Get all exercises for a module
-     * GET /api/modules/{moduleId}/exercises
+     * Get exercises for module (with optional role filter)
      */
-    @GetMapping("/{moduleId}/exercises")
-    public ResponseEntity<?> getModuleExercises(@PathVariable Long moduleId,
-                                               @RequestParam(required = false) String role) {
+    @GetMapping("/{id}/exercises")
+    public ResponseEntity<?> getModuleExercises(
+            @PathVariable Long id,
+            @RequestParam(required = false) String role) {
         try {
             List<Exercise> exercises;
-            
-            if (role != null) {
+            if (role != null && !role.isEmpty()) {
                 User.Role userRole = User.Role.valueOf(role.toUpperCase());
-                exercises = moduleService.getModuleExercisesForRole(moduleId, userRole);
+                exercises = moduleService.getModuleExercisesForRole(id, userRole);
             } else {
-                exercises = moduleService.getModuleExercises(moduleId);
+                exercises = moduleService.getModuleExercises(id);
             }
-            
             return ResponseEntity.ok(exercises);
-            
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body("Invalid role: " + role);
         } catch (Exception e) {
-            return ResponseEntity.badRequest()
-                .body(Map.of("error", e.getMessage()));
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body("Error: " + e.getMessage());
         }
     }
-    
-    /**
-     * Get exercises by difficulty
-     * GET /api/modules/{moduleId}/exercises/difficulty/{difficulty}
-     */
-    @GetMapping("/{moduleId}/exercises/difficulty/{difficulty}")
-    public ResponseEntity<?> getExercisesByDifficulty(@PathVariable Long moduleId,
-                                                      @PathVariable String difficulty) {
-        try {
-            Exercise.DifficultyLevel level = Exercise.DifficultyLevel.valueOf(difficulty.toUpperCase());
-            List<Exercise> exercises = moduleService.getExercisesByDifficulty(moduleId, level);
-            return ResponseEntity.ok(exercises);
-            
-        } catch (Exception e) {
-            return ResponseEntity.badRequest()
-                .body(Map.of("error", e.getMessage()));
-        }
-    }
-    
+
     /**
      * Get exercise by ID
-     * GET /api/modules/exercises/{exerciseId}
      */
     @GetMapping("/exercises/{exerciseId}")
     public ResponseEntity<?> getExerciseById(@PathVariable Long exerciseId) {
         try {
             Exercise exercise = moduleService.getExerciseById(exerciseId);
-            return ResponseEntity.ok(exercise);
-            
+            if (exercise != null) {
+                return ResponseEntity.ok(exercise);
+            } else {
+                return ResponseEntity.notFound().build();
+            }
         } catch (Exception e) {
-            return ResponseEntity.badRequest()
-                .body(Map.of("error", e.getMessage()));
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body("Error: " + e.getMessage());
         }
     }
-    
+
     /**
-     * Create a new module
-     * POST /api/modules
+     * Get exercises by difficulty
+     */
+    @GetMapping("/{id}/exercises/difficulty/{difficulty}")
+    public ResponseEntity<?> getExercisesByDifficulty(
+            @PathVariable Long id,
+            @PathVariable String difficulty) {
+        try {
+            Exercise.DifficultyLevel level = Exercise.DifficultyLevel.valueOf(difficulty.toUpperCase());
+            List<Exercise> exercises = moduleService.getExercisesByDifficulty(id, level);
+            return ResponseEntity.ok(exercises);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body("Invalid difficulty: " + difficulty);
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body("Error: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Create new module
      */
     @PostMapping
-    public ResponseEntity<?> createModule(@RequestBody ModuleCreateRequest request) {
+    public ResponseEntity<?> createModule(
+            @RequestParam String title,
+            @RequestParam String description,
+            @RequestParam Integer estimatedHours,
+            @RequestParam Integer moduleOrder) {
         try {
-            Module module = moduleService.createModule(
-                request.getTitle(),
-                request.getDescription(),
-                request.getModuleNumber(),
-                request.getEstimatedHours()
-            );
-            
-            return ResponseEntity.ok(module);
-            
+            Module module = moduleService.createModule(title, description, estimatedHours, moduleOrder);
+            return ResponseEntity.status(HttpStatus.CREATED).body(module);
         } catch (Exception e) {
-            return ResponseEntity.badRequest()
-                .body(Map.of("error", e.getMessage()));
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body("Error: " + e.getMessage());
         }
     }
-    
+
     /**
-     * Create a new exercise
-     * POST /api/modules/{moduleId}/exercises
+     * Create new exercise
      */
     @PostMapping("/{moduleId}/exercises")
-    public ResponseEntity<?> createExercise(@PathVariable Long moduleId,
-                                           @RequestBody ExerciseCreateRequest request) {
+    public ResponseEntity<?> createExercise(
+            @PathVariable Long moduleId,
+            @RequestParam String title,
+            @RequestParam String description,
+            @RequestParam String userStory,
+            @RequestParam(required = false, defaultValue = "EASY") String difficulty,
+            @RequestParam(required = false, defaultValue = "DEVELOPER") String targetRole) {
         try {
+            Exercise.DifficultyLevel difficultyLevel = Exercise.DifficultyLevel.valueOf(difficulty.toUpperCase());
+            User.Role role = User.Role.valueOf(targetRole.toUpperCase());
+
             Exercise exercise = moduleService.createExercise(
-                moduleId,
-                request.getTitle(),
-                request.getDescription(),
-                request.getUserStory(),
-                request.getDifficulty(),
-                request.getTargetRole()
-            );
-            
-            return ResponseEntity.ok(exercise);
-            
+                moduleId, title, description, userStory, difficultyLevel, role);
+            return ResponseEntity.status(HttpStatus.CREATED).body(exercise);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body("Invalid difficulty or role");
+        } catch (RuntimeException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());
         } catch (Exception e) {
-            return ResponseEntity.badRequest()
-                .body(Map.of("error", e.getMessage()));
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body("Error: " + e.getMessage());
         }
     }
-    
+
     /**
      * Update module
-     * PUT /api/modules/{moduleId}
      */
-    @PutMapping("/{moduleId}")
-    public ResponseEntity<?> updateModule(@PathVariable Long moduleId,
-                                         @RequestBody ModuleUpdateRequest request) {
+    @PutMapping("/{id}")
+    public ResponseEntity<?> updateModule(
+            @PathVariable Long id,
+            @RequestParam(required = false) String title,
+            @RequestParam(required = false) String description,
+            @RequestParam(required = false) Integer estimatedHours,
+            @RequestParam(required = false) Double passingScore) {
         try {
-            Module module = moduleService.updateModule(
-                moduleId,
-                request.getTitle(),
-                request.getDescription(),
-                request.getEstimatedHours(),
-                request.getPassingScore()
-            );
-            
-            return ResponseEntity.ok(module);
-            
+            Module module = moduleService.updateModule(id, title, description, estimatedHours, passingScore);
+            if (module != null) {
+                return ResponseEntity.ok(module);
+            } else {
+                return ResponseEntity.notFound().build();
+            }
         } catch (Exception e) {
-            return ResponseEntity.badRequest()
-                .body(Map.of("error", e.getMessage()));
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body("Error: " + e.getMessage());
         }
     }
-    
+
     /**
      * Update exercise
-     * PUT /api/modules/exercises/{exerciseId}
      */
     @PutMapping("/exercises/{exerciseId}")
-    public ResponseEntity<?> updateExercise(@PathVariable Long exerciseId,
-                                           @RequestBody ExerciseUpdateRequest request) {
+    public ResponseEntity<?> updateExercise(
+            @PathVariable Long exerciseId,
+            @RequestParam(required = false) String title,
+            @RequestParam(required = false) String description,
+            @RequestParam(required = false) String userStory,
+            @RequestParam(required = false) String sampleSolution) {
         try {
             Exercise exercise = moduleService.updateExercise(
-                exerciseId,
-                request.getTitle(),
-                request.getDescription(),
-                request.getUserStory(),
-                request.getSampleSolution()
-            );
-            
-            return ResponseEntity.ok(exercise);
-            
+                exerciseId, title, description, userStory, sampleSolution);
+            if (exercise != null) {
+                return ResponseEntity.ok(exercise);
+            } else {
+                return ResponseEntity.notFound().build();
+            }
         } catch (Exception e) {
-            return ResponseEntity.badRequest()
-                .body(Map.of("error", e.getMessage()));
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body("Error: " + e.getMessage());
         }
     }
-    
-    // DTOs
-    
-    public static class ModuleCreateRequest {
-        private String title;
-        private String description;
-        private Integer moduleNumber;
-        private Integer estimatedHours;
-        
-        public String getTitle() { return title; }
-        public void setTitle(String title) { this.title = title; }
-        
-        public String getDescription() { return description; }
-        public void setDescription(String description) { this.description = description; }
-        
-        public Integer getModuleNumber() { return moduleNumber; }
-        public void setModuleNumber(Integer moduleNumber) { this.moduleNumber = moduleNumber; }
-        
-        public Integer getEstimatedHours() { return estimatedHours; }
-        public void setEstimatedHours(Integer estimatedHours) { 
-            this.estimatedHours = estimatedHours; 
+
+    /**
+     * Activate module
+     */
+    @PutMapping("/{id}/activate")
+    public ResponseEntity<?> activateModule(@PathVariable Long id) {
+        try {
+            Module module = moduleService.activateModule(id);
+            if (module != null) {
+                return ResponseEntity.ok(module);
+            } else {
+                return ResponseEntity.notFound().build();
+            }
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body("Error: " + e.getMessage());
         }
     }
-    
-    public static class ModuleUpdateRequest {
-        private String title;
-        private String description;
-        private Integer estimatedHours;
-        private Double passingScore;
-        
-        public String getTitle() { return title; }
-        public void setTitle(String title) { this.title = title; }
-        
-        public String getDescription() { return description; }
-        public void setDescription(String description) { this.description = description; }
-        
-        public Integer getEstimatedHours() { return estimatedHours; }
-        public void setEstimatedHours(Integer estimatedHours) { 
-            this.estimatedHours = estimatedHours; 
+
+    /**
+     * Deactivate module
+     */
+    @PutMapping("/{id}/deactivate")
+    public ResponseEntity<?> deactivateModule(@PathVariable Long id) {
+        try {
+            Module module = moduleService.deactivateModule(id);
+            if (module != null) {
+                return ResponseEntity.ok(module);
+            } else {
+                return ResponseEntity.notFound().build();
+            }
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body("Error: " + e.getMessage());
         }
-        
-        public Double getPassingScore() { return passingScore; }
-        public void setPassingScore(Double passingScore) { this.passingScore = passingScore; }
     }
-    
-    public static class ExerciseCreateRequest {
-        private String title;
-        private String description;
-        private String userStory;
-        private Exercise.DifficultyLevel difficulty;
-        private User.Role targetRole;
-        
-        public String getTitle() { return title; }
-        public void setTitle(String title) { this.title = title; }
-        
-        public String getDescription() { return description; }
-        public void setDescription(String description) { this.description = description; }
-        
-        public String getUserStory() { return userStory; }
-        public void setUserStory(String userStory) { this.userStory = userStory; }
-        
-        public Exercise.DifficultyLevel getDifficulty() { return difficulty; }
-        public void setDifficulty(Exercise.DifficultyLevel difficulty) { 
-            this.difficulty = difficulty; 
+
+    /**
+     * Delete module
+     */
+    @DeleteMapping("/{id}")
+    public ResponseEntity<?> deleteModule(@PathVariable Long id) {
+        try {
+            boolean deleted = moduleService.deleteModule(id);
+            if (deleted) {
+                return ResponseEntity.ok("Module deleted successfully");
+            } else {
+                return ResponseEntity.notFound().build();
+            }
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body("Error: " + e.getMessage());
         }
-        
-        public User.Role getTargetRole() { return targetRole; }
-        public void setTargetRole(User.Role targetRole) { this.targetRole = targetRole; }
     }
-    
-    public static class ExerciseUpdateRequest {
-        private String title;
-        private String description;
-        private String userStory;
-        private String sampleSolution;
-        
-        public String getTitle() { return title; }
-        public void setTitle(String title) { this.title = title; }
-        
-        public String getDescription() { return description; }
-        public void setDescription(String description) { this.description = description; }
-        
-        public String getUserStory() { return userStory; }
-        public void setUserStory(String userStory) { this.userStory = userStory; }
-        
-        public String getSampleSolution() { return sampleSolution; }
-        public void setSampleSolution(String sampleSolution) { 
-            this.sampleSolution = sampleSolution; 
+
+    /**
+     * Delete exercise
+     */
+    @DeleteMapping("/exercises/{exerciseId}")
+    public ResponseEntity<?> deleteExercise(@PathVariable Long exerciseId) {
+        try {
+            boolean deleted = moduleService.deleteExercise(exerciseId);
+            if (deleted) {
+                return ResponseEntity.ok("Exercise deleted successfully");
+            } else {
+                return ResponseEntity.notFound().build();
+            }
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body("Error: " + e.getMessage());
         }
     }
 }

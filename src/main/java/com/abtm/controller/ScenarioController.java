@@ -1,153 +1,188 @@
 package com.abtm.controller;
 
 import com.abtm.model.Scenario;
-import com.abtm.model.User;
 import com.abtm.service.ScenarioAnalyzer;
 import com.abtm.service.ScenarioService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * REST Controller for Scenario operations
- */
 @RestController
 @RequestMapping("/api/scenarios")
 @CrossOrigin(origins = "*")
 public class ScenarioController {
-    
-    @Autowired
-    private ScenarioAnalyzer scenarioAnalyzer;
-    
+
     @Autowired
     private ScenarioService scenarioService;
-    
+
+    @Autowired
+    private ScenarioAnalyzer scenarioAnalyzer;
+
     /**
-     * Submit and analyze a BDD scenario
-     * POST /api/scenarios/submit
+     * Submit a scenario for analysis
      */
     @PostMapping("/submit")
-    public ResponseEntity<?> submitScenario(@RequestBody ScenarioSubmissionRequest request) {
+    public ResponseEntity<?> submitScenario(@RequestBody Map<String, Object> request) {
         try {
+            Long userId = Long.valueOf(request.get("userId").toString());
+            Long exerciseId = Long.valueOf(request.get("exerciseId").toString());
+            String content = request.get("content").toString();
+
             // Analyze the scenario
-            ScenarioAnalyzer.AnalysisResult analysis = 
-                scenarioAnalyzer.analyze(request.getContent());
-            
-            // Save to database (if user is authenticated)
-            if (request.getUserId() != null && request.getExerciseId() != null) {
-                Scenario savedScenario = scenarioService.saveScenario(
-                    request.getUserId(),
-                    request.getExerciseId(),
-                    request.getContent(),
-                    analysis
-                );
-                
-                return ResponseEntity.ok(new ScenarioResponse(savedScenario, analysis));
-            }
-            
-            // Return analysis only (for testing/demo)
-            return ResponseEntity.ok(analysis);
-            
+            ScenarioAnalyzer.AnalysisResult analysisResult = scenarioAnalyzer.analyze(content);
+
+            // Save the scenario with analysis
+            Scenario scenario = scenarioService.saveScenario(userId, exerciseId, content, analysisResult);
+
+            return ResponseEntity.status(HttpStatus.CREATED).body(scenario);
+        } catch (NumberFormatException e) {
+            return ResponseEntity.badRequest().body("Invalid user ID or exercise ID");
+        } catch (RuntimeException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());
         } catch (Exception e) {
-            return ResponseEntity.badRequest()
-                .body(Map.of("error", "Failed to analyze scenario: " + e.getMessage()));
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body("Error: " + e.getMessage());
         }
     }
-    
+
     /**
-     * Get user's scenarios
-     * GET /api/scenarios/user/{userId}
+     * Analyze scenario without saving (preview mode)
+     */
+    @PostMapping("/analyze")
+    public ResponseEntity<?> analyzeScenario(@RequestBody Map<String, String> request) {
+        try {
+            String content = request.get("content");
+            if (content == null || content.trim().isEmpty()) {
+                return ResponseEntity.badRequest().body("Content cannot be empty");
+            }
+
+            ScenarioAnalyzer.AnalysisResult result = scenarioAnalyzer.analyze(content);
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body("Error: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Get all scenarios for a user
      */
     @GetMapping("/user/{userId}")
     public ResponseEntity<?> getUserScenarios(@PathVariable Long userId) {
         try {
             List<Scenario> scenarios = scenarioService.getUserScenarios(userId);
             return ResponseEntity.ok(scenarios);
+        } catch (RuntimeException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());
         } catch (Exception e) {
-            return ResponseEntity.badRequest()
-                .body(Map.of("error", "Failed to retrieve scenarios: " + e.getMessage()));
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body("Error: " + e.getMessage());
         }
     }
-    
+
     /**
-     * Get scenario statistics for a user
-     * GET /api/scenarios/user/{userId}/stats
+     * Get user statistics
      */
-    @GetMapping("/user/{userId}/stats")
-    public ResponseEntity<?> getUserStats(@PathVariable Long userId) {
+    @GetMapping("/user/{userId}/statistics")
+    public ResponseEntity<?> getUserStatistics(@PathVariable Long userId) {
         try {
-            Map<String, Object> stats = scenarioService.getUserStatistics(userId);
-            return ResponseEntity.ok(stats);
+            Map<String, Object> statistics = scenarioService.getUserStatistics(userId);
+            return ResponseEntity.ok(statistics);
+        } catch (RuntimeException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());
         } catch (Exception e) {
-            return ResponseEntity.badRequest()
-                .body(Map.of("error", "Failed to retrieve statistics: " + e.getMessage()));
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body("Error: " + e.getMessage());
         }
     }
-    
+
     /**
-     * Test endpoint for quick scenario analysis
-     * POST /api/scenarios/analyze
+     * Get scenarios for a specific exercise
      */
-    @PostMapping("/analyze")
-    public ResponseEntity<?> analyzeScenario(@RequestBody Map<String, String> request) {
+    @GetMapping("/exercise/{exerciseId}")
+    public ResponseEntity<?> getExerciseScenarios(@PathVariable Long exerciseId) {
         try {
-            String content = request.get("content");
-            if (content == null || content.isEmpty()) {
-                return ResponseEntity.badRequest()
-                    .body(Map.of("error", "Content is required"));
+            List<Scenario> scenarios = scenarioService.getExerciseScenarios(exerciseId);
+            return ResponseEntity.ok(scenarios);
+        } catch (RuntimeException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body("Error: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Get user's scenarios for a specific exercise
+     */
+    @GetMapping("/user/{userId}/exercise/{exerciseId}")
+    public ResponseEntity<?> getUserExerciseScenarios(
+            @PathVariable Long userId,
+            @PathVariable Long exerciseId) {
+        try {
+            List<Scenario> scenarios = scenarioService.getUserExerciseScenarios(userId, exerciseId);
+            return ResponseEntity.ok(scenarios);
+        } catch (RuntimeException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body("Error: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Get scenario by ID
+     */
+    @GetMapping("/{id}")
+    public ResponseEntity<?> getScenarioById(@PathVariable Long id) {
+        try {
+            Scenario scenario = scenarioService.getScenarioById(id);
+            if (scenario != null) {
+                return ResponseEntity.ok(scenario);
+            } else {
+                return ResponseEntity.notFound().build();
             }
-            
-            ScenarioAnalyzer.AnalysisResult analysis = scenarioAnalyzer.analyze(content);
-            return ResponseEntity.ok(analysis);
-            
         } catch (Exception e) {
-            return ResponseEntity.badRequest()
-                .body(Map.of("error", "Analysis failed: " + e.getMessage()));
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body("Error: " + e.getMessage());
         }
     }
-    
-    // Request/Response DTOs
-    public static class ScenarioSubmissionRequest {
-        private Long userId;
-        private Long exerciseId;
-        private String content;
-        
-        // Getters and Setters
-        public Long getUserId() { return userId; }
-        public void setUserId(Long userId) { this.userId = userId; }
-        
-        public Long getExerciseId() { return exerciseId; }
-        public void setExerciseId(Long exerciseId) { this.exerciseId = exerciseId; }
-        
-        public String getContent() { return content; }
-        public void setContent(String content) { this.content = content; }
+
+    /**
+     * Reanalyze an existing scenario
+     */
+    @PostMapping("/{id}/reanalyze")
+    public ResponseEntity<?> reanalyzeScenario(@PathVariable Long id) {
+        try {
+            Scenario scenario = scenarioService.reanalyzeScenario(id);
+            return ResponseEntity.ok(scenario);
+        } catch (RuntimeException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body("Error: " + e.getMessage());
+        }
     }
-    
-    public static class ScenarioResponse {
-        private Long scenarioId;
-        private ScenarioAnalyzer.AnalysisResult analysis;
-        private String status;
-        
-        public ScenarioResponse(Scenario scenario, ScenarioAnalyzer.AnalysisResult analysis) {
-            this.scenarioId = scenario.getId();
-            this.analysis = analysis;
-            this.status = scenario.getStatus().toString();
+
+    /**
+     * Delete scenario
+     */
+    @DeleteMapping("/{id}")
+    public ResponseEntity<?> deleteScenario(@PathVariable Long id) {
+        try {
+            boolean deleted = scenarioService.deleteScenario(id);
+            if (deleted) {
+                return ResponseEntity.ok("Scenario deleted successfully");
+            } else {
+                return ResponseEntity.notFound().build();
+            }
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body("Error: " + e.getMessage());
         }
-        
-        // Getters and Setters
-        public Long getScenarioId() { return scenarioId; }
-        public void setScenarioId(Long scenarioId) { this.scenarioId = scenarioId; }
-        
-        public ScenarioAnalyzer.AnalysisResult getAnalysis() { return analysis; }
-        public void setAnalysis(ScenarioAnalyzer.AnalysisResult analysis) { 
-            this.analysis = analysis; 
-        }
-        
-        public String getStatus() { return status; }
-        public void setStatus(String status) { this.status = status; }
     }
 }

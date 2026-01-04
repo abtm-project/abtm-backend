@@ -3,189 +3,302 @@ package com.abtm.service;
 import com.abtm.model.Exercise;
 import com.abtm.model.Scenario;
 import com.abtm.model.User;
+import com.abtm.model.UserPerformance;
 import com.abtm.repository.ExerciseRepository;
 import com.abtm.repository.ScenarioRepository;
+import com.abtm.repository.UserPerformanceRepository;
 import com.abtm.repository.UserRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Service for managing BDD scenarios
- */
 @Service
-@Transactional
 public class ScenarioService {
-    
+
     @Autowired
     private ScenarioRepository scenarioRepository;
-    
+
     @Autowired
     private UserRepository userRepository;
-    
+
     @Autowired
     private ExerciseRepository exerciseRepository;
-    
+
+    @Autowired
+    private UserPerformanceRepository performanceRepository;
+
     @Autowired
     private ScenarioAnalyzer scenarioAnalyzer;
-    
+
     /**
-     * Save a new scenario with analysis results
+     * Submit and analyze a scenario
      */
-    public Scenario saveScenario(Long userId, Long exerciseId, String content,
-                                 ScenarioAnalyzer.AnalysisResult analysis) {
-        
+    public Scenario submitScenario(Long userId, Long exerciseId, String content) {
+        // Get user and exercise
         User user = userRepository.findById(userId)
-            .orElseThrow(() -> new RuntimeException("User not found with id: " + userId));
-        
+            .orElseThrow(() -> new RuntimeException("User not found"));
         Exercise exercise = exerciseRepository.findById(exerciseId)
-            .orElseThrow(() -> new RuntimeException("Exercise not found with id: " + exerciseId));
-        
-        // Get submission number (how many times user has submitted for this exercise)
-        List<Scenario> previousSubmissions = scenarioRepository
-            .findByUserIdAndExerciseId(userId, exerciseId);
-        int submissionNumber = previousSubmissions.size() + 1;
-        
+            .orElseThrow(() -> new RuntimeException("Exercise not found"));
+
+        // Check for existing scenarios
+        List<Scenario> existingScenarios = scenarioRepository.findByUserAndExercise(user, exercise);
+        int submissionNumber = existingScenarios.size() + 1;
+
+        // Analyze the scenario
+        ScenarioAnalyzer.AnalysisResult analysisResult = scenarioAnalyzer.analyze(content);
+
         // Create scenario entity
         Scenario scenario = new Scenario();
         scenario.setUser(user);
         scenario.setExercise(exercise);
         scenario.setContent(content);
         scenario.setSubmissionNumber(submissionNumber);
-        
-        // Set quality scores from analysis
-        scenario.setClarityScore(analysis.getClarityScore());
-        scenario.setBusinessValueScore(analysis.getBusinessValueScore());
-        scenario.setGherkinScore(analysis.getGherkinScore());
-        scenario.setTestabilityScore(analysis.getTestabilityScore());
-        scenario.setSpecificityScore(analysis.getSpecificityScore());
-        scenario.setDuplicationScore(analysis.getDuplicationScore());
-        
+
+        // Set dimension scores
+        scenario.setClarityScore(analysisResult.getClarityScore());
+        scenario.setBusinessValueScore(analysisResult.getBusinessValueScore());
+        scenario.setGherkinScore(analysisResult.getGherkinScore());
+        scenario.setTestabilityScore(analysisResult.getTestabilityScore());
+        scenario.setSpecificityScore(analysisResult.getSpecificityScore());
+        scenario.setDuplicationScore(analysisResult.getDuplicationScore());
+
         // Calculate overall SQS
         scenario.calculateOverallSqs();
-        
-        // Set feedback and anti-patterns
-        scenario.setFeedback(analysis.getFeedback());
-        if (analysis.getDetectedAntipatterns() != null && !analysis.getDetectedAntipatterns().isEmpty()) {
-            scenario.setDetectedAntipatterns(String.join("\n", analysis.getDetectedAntipatterns()));
-        }
-        scenario.setIsAutomationReady(analysis.isAutomationReady());
-        
-        // Determine status based on quality
-        if (scenario.getOverallSqs() >= 4.0) {
-            scenario.setStatus(Scenario.ScenarioStatus.ACCEPTED);
-        } else if (scenario.getOverallSqs() >= 3.0) {
-            scenario.setStatus(Scenario.ScenarioStatus.REVISION_NEEDED);
+
+        // Set feedback and status
+        scenario.setFeedback(analysisResult.getFeedback());
+        scenario.setDetectedAntipatterns(String.join("; ", analysisResult.getDetectedAntipatterns()));
+        scenario.setIsAutomationReady(analysisResult.isAutomationReady());
+
+        // Determine status based on overall score
+        if (scenario.getOverallSqs() >= 8.0) {
+            scenario.setStatus(Scenario.ScenarioStatus.PASSED);
+        } else if (scenario.getOverallSqs() >= 6.0) {
+            scenario.setStatus(Scenario.ScenarioStatus.NEEDS_IMPROVEMENT);
         } else {
-            scenario.setStatus(Scenario.ScenarioStatus.ANALYZED);
+            scenario.setStatus(Scenario.ScenarioStatus.FAILED);
         }
-        
-        return scenarioRepository.save(scenario);
+
+        // Save scenario
+        Scenario savedScenario = scenarioRepository.save(scenario);
+
+        // Update user performance
+        updateUserPerformance(user, exercise, scenario.getOverallSqs());
+
+        return savedScenario;
     }
-    
+
+    /**
+     * Save scenario with analysis result (alternative method for controller)
+     */
+    public Scenario saveScenario(Long userId, Long exerciseId, String content, 
+                                 ScenarioAnalyzer.AnalysisResult analysisResult) {
+        // Get user and exercise
+        User user = userRepository.findById(userId)
+            .orElseThrow(() -> new RuntimeException("User not found"));
+        Exercise exercise = exerciseRepository.findById(exerciseId)
+            .orElseThrow(() -> new RuntimeException("Exercise not found"));
+
+        // Check for existing scenarios
+        List<Scenario> existingScenarios = scenarioRepository.findByUserAndExercise(user, exercise);
+        int submissionNumber = existingScenarios.size() + 1;
+
+        // Create scenario entity
+        Scenario scenario = new Scenario();
+        scenario.setUser(user);
+        scenario.setExercise(exercise);
+        scenario.setContent(content);
+        scenario.setSubmissionNumber(submissionNumber);
+
+        // Set dimension scores
+        scenario.setClarityScore(analysisResult.getClarityScore());
+        scenario.setBusinessValueScore(analysisResult.getBusinessValueScore());
+        scenario.setGherkinScore(analysisResult.getGherkinScore());
+        scenario.setTestabilityScore(analysisResult.getTestabilityScore());
+        scenario.setSpecificityScore(analysisResult.getSpecificityScore());
+        scenario.setDuplicationScore(analysisResult.getDuplicationScore());
+
+        // Calculate overall SQS
+        scenario.calculateOverallSqs();
+
+        // Set feedback and status
+        scenario.setFeedback(analysisResult.getFeedback());
+        scenario.setDetectedAntipatterns(String.join("; ", analysisResult.getDetectedAntipatterns()));
+        scenario.setIsAutomationReady(analysisResult.isAutomationReady());
+
+        // Determine status based on overall score
+        if (scenario.getOverallSqs() >= 8.0) {
+            scenario.setStatus(Scenario.ScenarioStatus.PASSED);
+        } else if (scenario.getOverallSqs() >= 6.0) {
+            scenario.setStatus(Scenario.ScenarioStatus.NEEDS_IMPROVEMENT);
+        } else {
+            scenario.setStatus(Scenario.ScenarioStatus.FAILED);
+        }
+
+        // Save scenario
+        Scenario savedScenario = scenarioRepository.save(scenario);
+
+        // Update user performance
+        updateUserPerformance(user, exercise, scenario.getOverallSqs());
+
+        return savedScenario;
+    }
+
     /**
      * Get all scenarios for a user
      */
     public List<Scenario> getUserScenarios(Long userId) {
         User user = userRepository.findById(userId)
-            .orElseThrow(() -> new RuntimeException("User not found with id: " + userId));
-        
-        return scenarioRepository.findRecentByUser(user);
+            .orElseThrow(() -> new RuntimeException("User not found"));
+        return scenarioRepository.findByUser(user);
     }
-    
+
+    /**
+     * Get scenarios for a specific exercise
+     */
+    public List<Scenario> getExerciseScenarios(Long exerciseId) {
+        Exercise exercise = exerciseRepository.findById(exerciseId)
+            .orElseThrow(() -> new RuntimeException("Exercise not found"));
+        return scenarioRepository.findByExercise(exercise);
+    }
+
+    /**
+     * Get user's scenarios for a specific exercise
+     */
+    public List<Scenario> getUserExerciseScenarios(Long userId, Long exerciseId) {
+        User user = userRepository.findById(userId)
+            .orElseThrow(() -> new RuntimeException("User not found"));
+        Exercise exercise = exerciseRepository.findById(exerciseId)
+            .orElseThrow(() -> new RuntimeException("Exercise not found"));
+        return scenarioRepository.findByUserAndExercise(user, exercise);
+    }
+
     /**
      * Get scenario by ID
      */
-    public Scenario getScenarioById(Long scenarioId) {
-        return scenarioRepository.findById(scenarioId)
-            .orElseThrow(() -> new RuntimeException("Scenario not found with id: " + scenarioId));
+    public Scenario getScenarioById(Long id) {
+        return scenarioRepository.findById(id).orElse(null);
     }
-    
+
     /**
      * Get user statistics
      */
     public Map<String, Object> getUserStatistics(Long userId) {
-        User user = userRepository.findById(userId)
-            .orElseThrow(() -> new RuntimeException("User not found with id: " + userId));
-        
         Map<String, Object> stats = new HashMap<>();
-        
-        // Total scenarios submitted
-        List<Scenario> scenarios = scenarioRepository.findByUser(user);
-        stats.put("totalScenarios", scenarios.size());
-        
-        // Average SQS
-        Double avgSqs = scenarioRepository.calculateAverageSqsForUser(user);
-        stats.put("averageSQS", avgSqs != null ? avgSqs : 0.0);
-        
-        // Automation-ready scenarios
-        Long automationReady = scenarioRepository.countAutomationReadyScenarios(user);
-        stats.put("automationReadyCount", automationReady);
-        
-        // Scenarios by status
-        long accepted = scenarios.stream()
-            .filter(s -> s.getStatus() == Scenario.ScenarioStatus.ACCEPTED)
-            .count();
-        long needsRevision = scenarios.stream()
-            .filter(s -> s.getStatus() == Scenario.ScenarioStatus.REVISION_NEEDED)
-            .count();
-        
-        stats.put("acceptedCount", accepted);
-        stats.put("needsRevisionCount", needsRevision);
-        
-        // Quality score breakdown (averages)
-        if (!scenarios.isEmpty()) {
-            double avgClarity = scenarios.stream()
-                .mapToDouble(s -> s.getClarityScore() != null ? s.getClarityScore() : 0.0)
-                .average().orElse(0.0);
-            double avgBusinessValue = scenarios.stream()
-                .mapToDouble(s -> s.getBusinessValueScore() != null ? s.getBusinessValueScore() : 0.0)
-                .average().orElse(0.0);
-            double avgGherkin = scenarios.stream()
-                .mapToDouble(s -> s.getGherkinScore() != null ? s.getGherkinScore() : 0.0)
-                .average().orElse(0.0);
-            double avgTestability = scenarios.stream()
-                .mapToDouble(s -> s.getTestabilityScore() != null ? s.getTestabilityScore() : 0.0)
-                .average().orElse(0.0);
-            
-            Map<String, Double> qualityBreakdown = new HashMap<>();
-            qualityBreakdown.put("clarity", avgClarity);
-            qualityBreakdown.put("businessValue", avgBusinessValue);
-            qualityBreakdown.put("gherkin", avgGherkin);
-            qualityBreakdown.put("testability", avgTestability);
-            
-            stats.put("qualityBreakdown", qualityBreakdown);
+
+        User user = userRepository.findById(userId)
+            .orElseThrow(() -> new RuntimeException("User not found"));
+
+        // Total scenarios
+        long totalScenarios = scenarioRepository.countByUser(user);
+        stats.put("totalScenarios", totalScenarios);
+
+        // Passed scenarios
+        long passedScenarios = scenarioRepository.countByUserAndStatus(user, Scenario.ScenarioStatus.PASSED);
+        stats.put("passedScenarios", passedScenarios);
+
+        // Failed scenarios
+        long failedScenarios = scenarioRepository.countByUserAndStatus(user, Scenario.ScenarioStatus.FAILED);
+        stats.put("failedScenarios", failedScenarios);
+
+        // Needs improvement
+        long needsImprovement = scenarioRepository.countByUserAndStatus(user, Scenario.ScenarioStatus.NEEDS_IMPROVEMENT);
+        stats.put("needsImprovement", needsImprovement);
+
+        // Average score
+        List<Scenario> allScenarios = scenarioRepository.findByUser(user);
+        if (!allScenarios.isEmpty()) {
+            double avgScore = allScenarios.stream()
+                .filter(s -> s.getOverallSqs() != null)
+                .mapToDouble(Scenario::getOverallSqs)
+                .average()
+                .orElse(0.0);
+            stats.put("averageScore", Math.round(avgScore * 100.0) / 100.0);
+        } else {
+            stats.put("averageScore", 0.0);
         }
-        
+
+        // Completed modules
+        Long completedModules = performanceRepository.countCompletedModulesByUserId(userId);
+        stats.put("completedModules", completedModules != null ? completedModules : 0);
+
         return stats;
     }
-    
+
     /**
      * Reanalyze an existing scenario
      */
     public Scenario reanalyzeScenario(Long scenarioId) {
-        Scenario scenario = getScenarioById(scenarioId);
-        
-        // Analyze again
-        ScenarioAnalyzer.AnalysisResult analysis = 
-            scenarioAnalyzer.analyze(scenario.getContent());
-        
-        // Update scores
-        scenario.setClarityScore(analysis.getClarityScore());
-        scenario.setBusinessValueScore(analysis.getBusinessValueScore());
-        scenario.setGherkinScore(analysis.getGherkinScore());
-        scenario.setTestabilityScore(analysis.getTestabilityScore());
-        scenario.setSpecificityScore(analysis.getSpecificityScore());
-        scenario.setDuplicationScore(analysis.getDuplicationScore());
+        Scenario scenario = scenarioRepository.findById(scenarioId)
+            .orElseThrow(() -> new RuntimeException("Scenario not found"));
+
+        // Analyze the scenario content
+        ScenarioAnalyzer.AnalysisResult analysisResult = scenarioAnalyzer.analyze(scenario.getContent());
+
+        // Update dimension scores
+        scenario.setClarityScore(analysisResult.getClarityScore());
+        scenario.setBusinessValueScore(analysisResult.getBusinessValueScore());
+        scenario.setGherkinScore(analysisResult.getGherkinScore());
+        scenario.setTestabilityScore(analysisResult.getTestabilityScore());
+        scenario.setSpecificityScore(analysisResult.getSpecificityScore());
+        scenario.setDuplicationScore(analysisResult.getDuplicationScore());
+
+        // Recalculate overall SQS
         scenario.calculateOverallSqs();
-        
-        scenario.setFeedback(analysis.getFeedback());
-        scenario.setIsAutomationReady(analysis.isAutomationReady());
-        
+
+        // Update feedback and status
+        scenario.setFeedback(analysisResult.getFeedback());
+        scenario.setDetectedAntipatterns(String.join("; ", analysisResult.getDetectedAntipatterns()));
+        scenario.setIsAutomationReady(analysisResult.isAutomationReady());
+
+        // Update status
+        if (scenario.getOverallSqs() >= 8.0) {
+            scenario.setStatus(Scenario.ScenarioStatus.PASSED);
+        } else if (scenario.getOverallSqs() >= 6.0) {
+            scenario.setStatus(Scenario.ScenarioStatus.NEEDS_IMPROVEMENT);
+        } else {
+            scenario.setStatus(Scenario.ScenarioStatus.FAILED);
+        }
+
         return scenarioRepository.save(scenario);
+    }
+
+    /**
+     * Delete scenario
+     */
+    public boolean deleteScenario(Long id) {
+        if (scenarioRepository.existsById(id)) {
+            scenarioRepository.deleteById(id);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Update user performance based on scenario submission
+     */
+    private void updateUserPerformance(User user, Exercise exercise, Double score) {
+        List<UserPerformance> existingPerformance = performanceRepository.findByUserAndExercise(user, exercise);
+
+        UserPerformance performance;
+        if (existingPerformance.isEmpty()) {
+            performance = new UserPerformance();
+            performance.setUser(user);
+            performance.setExercise(exercise);
+            performance.setAttemptCount(1);
+        } else {
+            performance = existingPerformance.get(0);
+            performance.setAttemptCount(performance.getAttemptCount() + 1);
+        }
+
+        // Update performance score (use highest score or average, depending on strategy)
+        if (performance.getPerformanceScore() == null || score > performance.getPerformanceScore()) {
+            performance.setPerformanceScore(score * 10); // Convert 0-10 to 0-100
+        }
+
+        performanceRepository.save(performance);
     }
 }

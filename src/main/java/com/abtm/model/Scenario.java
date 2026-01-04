@@ -1,48 +1,39 @@
 package com.abtm.model;
 
-import lombok.AllArgsConstructor;
 import lombok.Data;
-import lombok.NoArgsConstructor;
-import org.hibernate.annotations.CreationTimestamp;
-import org.hibernate.annotations.UpdateTimestamp;
-
 import javax.persistence.*;
-import javax.validation.constraints.NotBlank;
-import javax.validation.constraints.NotNull;
 import java.time.LocalDateTime;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 
-/**
- * Scenario Entity - Represents BDD scenarios submitted by learners
- */
+@Data
 @Entity
 @Table(name = "scenarios")
-@Data
-@NoArgsConstructor
-@AllArgsConstructor
 public class Scenario {
     
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
     
-    @NotNull
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "user_id", nullable = false)
+    @JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})
     private User user;
     
-    @NotNull
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "exercise_id", nullable = false)
+    @JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})
     private Exercise exercise;
     
-    @NotBlank
     @Column(columnDefinition = "TEXT", nullable = false)
     private String content;
     
     @Column(name = "submission_number")
-    private Integer submissionNumber = 1;
+    private Integer submissionNumber;
     
-    // Quality Scores (from the 6-dimensional rubric)
+    @Column(name = "submitted_at")
+    private LocalDateTime submittedAt;
+    
+    // 6 dimension scores
     @Column(name = "clarity_score")
     private Double clarityScore;
     
@@ -64,7 +55,6 @@ public class Scenario {
     @Column(name = "overall_sqs")
     private Double overallSqs;
     
-    // Feedback from automated analysis
     @Column(columnDefinition = "TEXT")
     private String feedback;
     
@@ -72,47 +62,52 @@ public class Scenario {
     private String detectedAntipatterns;
     
     @Column(name = "is_automation_ready")
-    private Boolean isAutomationReady = false;
+    private Boolean isAutomationReady;
     
     @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
-    private ScenarioStatus status = ScenarioStatus.SUBMITTED;
+    private ScenarioStatus status;
     
-    @CreationTimestamp
-    @Column(name = "submitted_at", nullable = false, updatable = false)
-    private LocalDateTime submittedAt;
-    
-    @UpdateTimestamp
-    @Column(name = "updated_at")
-    private LocalDateTime updatedAt;
-    
-    @Column(name = "reviewed_at")
-    private LocalDateTime reviewedAt;
-    
-    public enum ScenarioStatus {
-        SUBMITTED,
-        ANALYZED,
-        REVISION_NEEDED,
-        ACCEPTED,
-        REJECTED
+    @PrePersist
+    protected void onCreate() {
+        if (submittedAt == null) {
+            submittedAt = LocalDateTime.now();
+        }
+        if (status == null) {
+            status = ScenarioStatus.SUBMITTED;
+        }
     }
     
-    /**
-     * Calculate overall SQS using weighted formula from paper:
-     * SQS = 0.2×Clarity + 0.2×BusinessValue + 0.2×Gherkin + 
-     *       0.2×Testability + 0.1×Specificity + 0.1×Duplication
-     */
+    // Helper method to calculate overall SQS from dimension scores
     public void calculateOverallSqs() {
         if (clarityScore != null && businessValueScore != null && 
-            gherkinScore != null && testabilityScore != null &&
+            gherkinScore != null && testabilityScore != null && 
             specificityScore != null && duplicationScore != null) {
             
-            this.overallSqs = (0.20 * clarityScore) +
-                             (0.20 * businessValueScore) +
-                             (0.20 * gherkinScore) +
-                             (0.20 * testabilityScore) +
-                             (0.10 * specificityScore) +
-                             (0.10 * duplicationScore);
+            // Weighted average
+            double[] weights = {0.20, 0.20, 0.20, 0.15, 0.15, 0.10};
+            double[] scores = {
+                clarityScore, 
+                businessValueScore, 
+                gherkinScore, 
+                testabilityScore, 
+                specificityScore, 
+                duplicationScore
+            };
+            
+            double weightedSum = 0.0;
+            for (int i = 0; i < weights.length; i++) {
+                weightedSum += weights[i] * scores[i];
+            }
+            
+            this.overallSqs = Math.round(weightedSum * 100.0) / 100.0;
         }
+    }
+    
+    public enum ScenarioStatus {
+        DRAFT,
+        SUBMITTED,
+        PASSED,
+        FAILED,
+        NEEDS_IMPROVEMENT
     }
 }

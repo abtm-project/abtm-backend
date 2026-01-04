@@ -10,28 +10,30 @@ import org.springframework.stereotype.Repository;
 
 import java.util.List;
 
-/**
- * Repository interface for Exercise entity
- */
 @Repository
 public interface ExerciseRepository extends JpaRepository<Exercise, Long> {
     
+    // Find exercises by module
     List<Exercise> findByModule(Module module);
     
-    List<Exercise> findByModuleAndIsActiveTrueOrderByOrderIndex(Module module);
+    // Find exercises by module ordered by exercise order
+    List<Exercise> findByModuleOrderByExerciseOrder(Module module);
     
-    List<Exercise> findByTargetRole(User.Role role);
+    // Find active exercises by module ordered by order index
+    @Query("SELECT e FROM Exercise e WHERE e.module = :module AND e.isActive = true ORDER BY e.exerciseOrder")
+    List<Exercise> findByModuleAndIsActiveTrueOrderByOrderIndex(@Param("module") Module module);
     
+    // Find exercises by module and role
+    @Query("SELECT e FROM Exercise e WHERE e.module = :module AND (e.targetRole = :role OR e.targetRole IS NULL) AND e.isActive = true ORDER BY e.exerciseOrder")
+    List<Exercise> findByModuleAndRole(@Param("module") Module module, @Param("role") User.Role role);
+    
+    // Find exercises by module and difficulty
+    @Query("SELECT e FROM Exercise e WHERE e.module.id = :moduleId AND e.difficulty = :difficulty")
+    List<Exercise> findByModuleIdAndDifficulty(@Param("moduleId") Long moduleId, @Param("difficulty") Exercise.DifficultyLevel difficulty);
+    
+    // Find exercises by difficulty
     List<Exercise> findByDifficulty(Exercise.DifficultyLevel difficulty);
     
-    @Query("SELECT e FROM Exercise e WHERE e.module = :module AND " +
-           "(e.targetRole = :role OR e.targetRole IS NULL) AND e.isActive = true " +
-           "ORDER BY e.orderIndex")
-    List<Exercise> findByModuleAndRole(@Param("module") Module module, 
-                                       @Param("role") User.Role role);
-    
-    @Query("SELECT e FROM Exercise e WHERE e.module.id = :moduleId AND " +
-           "e.difficulty = :difficulty AND e.isActive = true")
-    List<Exercise> findByModuleIdAndDifficulty(@Param("moduleId") Long moduleId,
-                                                @Param("difficulty") Exercise.DifficultyLevel difficulty);
+    // Count exercises in a module
+    long countByModule(Module module);
 }

@@ -1,302 +1,128 @@
 package com.abtm.service;
 
-import com.abtm.model.*;
+import com.abtm.model.Exercise;
 import com.abtm.model.Module;
-import com.abtm.repository.*;
+import com.abtm.model.User;
+import com.abtm.model.UserPerformance;
+import com.abtm.repository.ExerciseRepository;
+import com.abtm.repository.ModuleRepository;
+import com.abtm.repository.UserPerformanceRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
-import java.util.stream.Collectors;
 
-/**
- * Adaptive Engine Service - Implements the adaptive algorithm from the research paper
- * 
- * Performance Score (PS) = 0.2×KS + 0.4×SQS + 0.15×CS + 0.15×AR + 0.1×TE
- * 
- * Proficiency Levels:
- * - Struggling: PS < 60%
- * - Progressing: 60% <= PS < 85%
- * - Mastering: PS >= 85%
- */
 @Service
-@Transactional
 public class AdaptiveEngine {
-    
-    @Autowired
-    private UserRepository userRepository;
-    
+
     @Autowired
     private ModuleRepository moduleRepository;
-    
-    @Autowired
-    private UserPerformanceRepository performanceRepository;
-    
-    @Autowired
-    private ScenarioRepository scenarioRepository;
-    
+
     @Autowired
     private ExerciseRepository exerciseRepository;
-    
+
+    @Autowired
+    private UserPerformanceRepository performanceRepository;
+
     /**
-     * Update user performance after completing an exercise or module
+     * Get recommended next module for user
      */
-    public UserPerformance updatePerformance(Long userId, Long moduleId,
-                                            Double knowledgeScore,
-                                            Double scenarioQualityScore,
-                                            Double collaborationScore,
-                                            Double automationReadiness,
-                                            Double timeEfficiency) {
+    public Module getNextModule(User user) {
+        // Get all active modules
+        List<Module> allModules = moduleRepository.findByIsActiveTrueOrderByOrderIndex();
         
-        User user = userRepository.findById(userId)
-            .orElseThrow(() -> new RuntimeException("User not found"));
-        
-        Module module = moduleRepository.findById(moduleId)
-            .orElseThrow(() -> new RuntimeException("Module not found"));
-        
-        // Get or create performance record
-        UserPerformance performance = performanceRepository
-            .findByUserAndModule(user, module)
-            .orElse(new UserPerformance());
-        
-        performance.setUser(user);
-        performance.setModule(module);
-        
-        // Update component scores
-        performance.setKnowledgeScore(knowledgeScore);
-        performance.setScenarioQualityScore(scenarioQualityScore);
-        performance.setCollaborationScore(collaborationScore);
-        performance.setAutomationReadiness(automationReadiness);
-        performance.setTimeEfficiency(timeEfficiency);
-        
-        // Calculate performance score
-        performance.calculatePerformanceScore();
-        
-        // Identify weak areas
-        List<String> weakAreas = identifyWeakAreas(performance);
-        performance.setWeakAreas(String.join(",", weakAreas));
-        
-        // Recommend interventions
-        if (performance.getProficiencyLevel() == UserPerformance.ProficiencyLevel.STRUGGLING) {
-            performance.setInterventionsCount(performance.getInterventionsCount() + 1);
+        if (allModules.isEmpty()) {
+            return null;
+        }
+
+        // Get completed modules
+        List<Module> completedModules = performanceRepository.findCompletedModulesByUser(user);
+
+        // Find first uncompleted module
+        for (Module module : allModules) {
+            boolean isCompleted = completedModules.stream()
+                .anyMatch(cm -> cm.getId().equals(module.getId()));
             
-            // Recommend additional exercises
-            List<Long> recommendedExercises = recommendExercises(user, module, weakAreas);
-            performance.setRecommendedExercises(
-                recommendedExercises.stream()
-                    .map(String::valueOf)
-                    .reduce((a, b) -> a + "," + b)
-                    .orElse("")
-            );
+            if (!isCompleted) {
+                return module;
+            }
         }
-        
-        // Update user's overall performance score
-        user.setPerformanceScore(performance.getPerformanceScore());
-        userRepository.save(user);
-        
-        return performanceRepository.save(performance);
+
+        // All modules completed, return null
+        return null;
     }
-    
+
     /**
-     * Calculate average SQS for a user in a module
+     * Get recommended exercises for user in a module
      */
-    public Double calculateAverageSQS(User user, Module module) {
-        List<Scenario> scenarios = scenarioRepository.findByUser(user).stream()
-            .filter(s -> s.getExercise().getModule().equals(module))
-            .collect(Collectors.toList());
-        
-        if (scenarios.isEmpty()) {
-            return 0.0;
+    public List<Exercise> getRecommendedExercises(User user, Module module) {
+        // Get all exercises for module filtered by role
+        return exerciseRepository.findByModuleAndRole(module, user.getRole());
+    }
+
+    /**
+     * Check if user can progress to next module
+     */
+    public boolean canProgressToNextModule(User user, Module currentModule) {
+        // Get user's performance in this module
+        List<UserPerformance> performances = performanceRepository.findByUserAndModule(user, currentModule);
+
+        if (performances.isEmpty()) {
+            return false;
         }
-        
-        return scenarios.stream()
-            .mapToDouble(s -> s.getOverallSqs() != null ? s.getOverallSqs() : 0.0)
+
+        // Calculate average performance
+        double avgScore = performances.stream()
+            .filter(p -> p.getPerformanceScore() != null)
+            .mapToDouble(UserPerformance::getPerformanceScore)
             .average()
             .orElse(0.0);
+
+        // User can progress if average score >= passing score (default 70)
+        Double passingScore = currentModule.getPassingScore();
+        if (passingScore == null) {
+            passingScore = 70.0;
+        }
+
+        return avgScore >= passingScore;
     }
-    
+
     /**
-     * Identify weak areas based on component scores
+     * Get user's weak areas (exercises with low scores)
      */
-    private List<String> identifyWeakAreas(UserPerformance performance) {
-        List<String> weakAreas = new ArrayList<>();
-        double threshold = 60.0; // Below 60% is considered weak
+    public List<Exercise> getWeakAreas(User user, Module module) {
+        List<Exercise> weakExercises = new ArrayList<>();
         
-        if (performance.getKnowledgeScore() < threshold) {
-            weakAreas.add("knowledge");
-        }
-        if (performance.getScenarioQualityScore() < threshold) {
-            weakAreas.add("scenario_quality");
-        }
-        if (performance.getCollaborationScore() < threshold) {
-            weakAreas.add("collaboration");
-        }
-        if (performance.getAutomationReadiness() < threshold) {
-            weakAreas.add("automation");
-        }
-        if (performance.getTimeEfficiency() < threshold) {
-            weakAreas.add("time_management");
-        }
+        List<UserPerformance> performances = performanceRepository.findByUserAndModule(user, module);
         
-        return weakAreas;
-    }
-    
-    /**
-     * Recommend additional exercises based on weak areas
-     */
-    private List<Long> recommendExercises(User user, Module module, List<String> weakAreas) {
-        List<Long> recommendations = new ArrayList<>();
-        
-        // Get all exercises for this module
-        List<Exercise> exercises = exerciseRepository
-            .findByModuleAndRole(module, user.getRole());
-        
-        // If scenario quality is weak, recommend Foundation level exercises
-        if (weakAreas.contains("scenario_quality")) {
-            exercises.stream()
-                .filter(e -> e.getDifficulty() == Exercise.DifficultyLevel.FOUNDATION)
-                .limit(2)
-                .forEach(e -> recommendations.add(e.getId()));
-        }
-        
-        // If automation is weak, recommend Standard level exercises
-        if (weakAreas.contains("automation")) {
-            exercises.stream()
-                .filter(e -> e.getDifficulty() == Exercise.DifficultyLevel.STANDARD)
-                .limit(2)
-                .forEach(e -> recommendations.add(e.getId()));
-        }
-        
-        return recommendations;
-    }
-    
-    /**
-     * Determine next module for user based on performance
-     */
-    public Module determineNextModule(Long userId) {
-        User user = userRepository.findById(userId)
-            .orElseThrow(() -> new RuntimeException("User not found"));
-        
-        // Get completed modules
-        List<UserPerformance> completedModules = performanceRepository
-            .findCompletedModulesByUser(user);
-        
-        if (completedModules.isEmpty()) {
-            // Start with Module 1
-            return moduleRepository.findByModuleNumber(1)
-                .orElseThrow(() -> new RuntimeException("Module 1 not found"));
-        }
-        
-        // Get current module number
-        int currentModule = user.getCurrentModule();
-        
-        // Check if current module is completed with sufficient performance
-        UserPerformance currentPerformance = completedModules.stream()
-            .filter(p -> p.getModule().getModuleNumber() == currentModule)
-            .findFirst()
-            .orElse(null);
-        
-        if (currentPerformance != null && currentPerformance.getPerformanceScore() >= 70.0) {
-            // Move to next module
-            return moduleRepository.findByModuleNumber(currentModule + 1)
-                .orElse(null);
-        }
-        
-        // Stay on current module
-        return moduleRepository.findByModuleNumber(currentModule)
-            .orElseThrow(() -> new RuntimeException("Current module not found"));
-    }
-    
-    /**
-     * Get personalized learning path for user
-     */
-    public Map<String, Object> getPersonalizedPath(Long userId) {
-        User user = userRepository.findById(userId)
-            .orElseThrow(() -> new RuntimeException("User not found"));
-        
-        Map<String, Object> path = new HashMap<>();
-        
-        // Current proficiency level
-        path.put("proficiencyLevel", user.getProficiencyLevel());
-        path.put("overallPerformanceScore", user.getPerformanceScore());
-        
-        // Current module
-        Module currentModule = moduleRepository.findByModuleNumber(user.getCurrentModule())
-            .orElse(null);
-        path.put("currentModule", currentModule);
-        
-        // Next module
-        Module nextModule = determineNextModule(userId);
-        path.put("nextModule", nextModule);
-        
-        // Performance history
-        List<UserPerformance> performances = performanceRepository
-            .findByUserOrderByModuleModuleNumber(user);
-        path.put("performanceHistory", performances);
-        
-        // Recommended exercises
-        if (currentModule != null) {
-            UserPerformance currentPerformance = performanceRepository
-                .findByUserAndModule(user, currentModule)
-                .orElse(null);
-            
-            if (currentPerformance != null && 
-                currentPerformance.getProficiencyLevel() == UserPerformance.ProficiencyLevel.STRUGGLING) {
-                
-                String[] recommendedIds = currentPerformance.getRecommendedExercises() != null ?
-                    currentPerformance.getRecommendedExercises().split(",") : new String[0];
-                
-                path.put("recommendedExercises", recommendedIds);
-                path.put("weakAreas", currentPerformance.getWeakAreas());
-                path.put("interventionCount", currentPerformance.getInterventionsCount());
+        for (UserPerformance performance : performances) {
+            if (performance.getPerformanceScore() != null && performance.getPerformanceScore() < 70) {
+                weakExercises.add(performance.getExercise());
             }
         }
         
-        // Progress percentage
-        Long completedCount = performanceRepository.countCompletedModules(user);
-        double progress = (completedCount / 4.0) * 100.0; // 4 total modules
-        path.put("progressPercentage", progress);
-        
-        return path;
+        return weakExercises;
     }
-    
+
     /**
-     * Check if user is ready to advance to next module
+     * Get user's progress percentage in a module
      */
-    public boolean isReadyToAdvance(Long userId, Long moduleId) {
-        User user = userRepository.findById(userId)
-            .orElseThrow(() -> new RuntimeException("User not found"));
+    public double getModuleProgress(User user, Module module) {
+        // Get all exercises in module
+        List<Exercise> allExercises = exerciseRepository.findByModule(module);
         
-        Module module = moduleRepository.findById(moduleId)
-            .orElseThrow(() -> new RuntimeException("Module not found"));
-        
-        UserPerformance performance = performanceRepository
-            .findByUserAndModule(user, module)
-            .orElse(null);
-        
-        if (performance == null) {
-            return false;
+        if (allExercises.isEmpty()) {
+            return 0.0;
         }
+
+        // Get completed exercises (score >= 70)
+        List<UserPerformance> performances = performanceRepository.findByUserAndModule(user, module);
         
-        // Criteria for advancement:
-        // 1. Performance Score >= 70%
-        // 2. Module is marked as completed
-        // 3. At least one accepted scenario
-        
-        boolean hasGoodScore = performance.getPerformanceScore() >= 70.0;
-        boolean isCompleted = performance.getModuleCompleted();
-        
-        long acceptedScenarios = scenarioRepository.findByUser(user).stream()
-            .filter(s -> s.getExercise().getModule().equals(module))
-            .filter(s -> s.getStatus() == Scenario.ScenarioStatus.ACCEPTED)
+        long completedCount = performances.stream()
+            .filter(p -> p.getPerformanceScore() != null && p.getPerformanceScore() >= 70)
             .count();
-        
-        boolean hasAcceptedScenario = acceptedScenarios > 0;
-        
-        return hasGoodScore && isCompleted && hasAcceptedScenario;
+
+        return (double) completedCount / allExercises.size() * 100.0;
     }
 }
